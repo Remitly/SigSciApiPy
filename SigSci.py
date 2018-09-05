@@ -655,8 +655,9 @@ class SigSciAPI():
             'headers': {},
             'headers_list': invalue['headersOut'],
         }
-        result['tags'] = [tag['type'] for tag in invalue['tags']]
-        result['tags_raw'] = invalue['tags']
+        if invalue['tags'] is not None and len(invalue['tags']) > 0:
+            result['tags'] = [tag['type'] for tag in invalue['tags']]
+            result['tags_raw'] = invalue['tags']
         result['summation'] = invalue['summation']
         if invalue['headersIn'] is not None:
             for header in invalue['headersIn']:

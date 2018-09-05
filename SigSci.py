@@ -6,14 +6,16 @@ Signal Sciences Python API Client
 
 from __future__ import print_function
 import argparse
+import calendar
 import csv
 import datetime
-import time
-import calendar
 import json
-import os
-import sys
 import math
+import os
+import socket
+import sys
+import time
+import traceback
 from configparser import ConfigParser
 from builtins import str
 import requests
@@ -94,6 +96,9 @@ MEMBERS_DELETE = False
 # default for health
 HEALTH = False
 ###########################################
+
+BGP_LOOKUP_HOST = "whois.cymru.com"
+BGP_LOOKUP_PORT = 43
 
 sys.dont_write_bytecode = True
 
@@ -566,6 +571,101 @@ class SigSciAPI():
             print('Error: %s ' % str(e))
             print('Query: %s ' % url)
 
+    def get_bgp_prefixes(self, ip_addrs):
+        payload = b"begin\nverbose\n"
+        for ip in ip_addrs:
+            payload += (b"%s\n" % ip.encode('UTF-8'))
+        payload += b"end\n"
+        # create an INET, STREAMing socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect((BGP_LOOKUP_HOST, BGP_LOOKUP_PORT))
+        s.send(payload)
+        buffer = b''
+        while True:
+            packet = s.recv(4096)
+            if packet:
+                buffer += packet
+            else:
+                break
+        lines = buffer.split(b"\n")
+        results = {}
+        for line in lines:
+            result = {}
+            if b"|" not in line:
+                continue
+
+            fields = line.decode('UTF-8').split("|")
+            ip = fields[1].strip()
+            result['asn'] = fields[0].strip()
+            result['ip'] = ip
+            result['prefix'] = fields[2].strip()
+            result['registry'] = fields[4].strip()
+            result['isp'] = fields[6].strip()
+            results[ip] = result
+
+        return results
+
+    def keyify(self, value):
+        return value.replace("-", "_").lower().strip()
+
+    def enrich_req_result(self, invalue, prefixes):
+        try:
+            prefix = prefixes[invalue['remoteIP']]
+        except KeyError as e:
+            print("key error: %s" % invalue['remoteIP'])
+            prefix = {
+                'asn': None,
+                'ip': None,
+                'prefix': None,
+                'registry': None,
+                'isp': None
+            }
+        result = {}
+        result['@timestamp'] = invalue['timestamp']
+        result['id'] = invalue['id']
+        result['server'] = invalue['serverHostname']
+        result['remote'] = {
+            'ip': invalue['remoteIP'],
+            'country': invalue['remoteCountryCode'],
+            'hostname': invalue['remoteHostname'],
+            'asn': prefix['asn'],
+            'prefix': prefix['prefix'],
+            'registry': prefix['registry'],
+            'isp': prefix['isp']
+        }
+        result['tls'] = {
+            'protocol': invalue['tlsProtocol'],
+            'cipher': invalue['tlsCipher']
+        }
+        result['request'] = {
+            'protocol': invalue['protocol'],
+            'method': invalue['method'],
+            'scheme': invalue['scheme'],
+            'path': invalue['path'],
+            'uri': invalue['uri'],
+            'user_agent': invalue['userAgent'],
+            'headers': {},
+            'headers_list': invalue['headersIn'],
+        }
+        result['response'] = {
+            'agent_status': invalue['agentResponseCode'],
+            'status': invalue['responseCode'],
+            'length': invalue['responseSize'],
+            'duration': invalue['responseMillis'],
+            'headers': {},
+            'headers_list': invalue['headersOut'],
+        }
+        result['tags'] = [tag['type'] for tag in invalue['tags']]
+        result['tags_raw'] = invalue['tags']
+        result['summation'] = invalue['summation']
+        if invalue['headersIn'] is not None:
+            for header in invalue['headersIn']:
+                result['request']['headers'][self.keyify(header[0])] = header[1]
+        if invalue['headersOut'] is not None:
+            for header in invalue['headersOut']:
+                result['response']['headers'][self.keyify(header[0])] = header[1]
+        return result
+
     def poll_req_continuously(self):
         """
         SigSciAPI.poll_req_continuously()
@@ -648,10 +748,16 @@ class SigSciAPI():
 
                     next_ref = j['next']
 
+                batch_ips = set()
                 for id in curr_set:
                     if id not in prev_set:
-                        # we've haven't seen this request, output it
-                        self.output_results(curr_set[id])
+                        batch_ips.add(curr_set[id]['remoteIP'])
+                prefixes = self.get_bgp_prefixes(batch_ips)
+
+                for id in curr_set:
+                    if id not in prev_set:
+                        # we've haven't seen this request, enrich it, then output it
+                        self.output_results(self.enrich_req_result(curr_set[id], prefixes))
 
                 # swap curr to prev
                 prev_set = curr_set
@@ -662,6 +768,7 @@ class SigSciAPI():
         except Exception as e:
             print('Error: %s ' % str(e))
             print('Query: %s ' % url)
+            traceback.print_exc()
             sys.exit()
 
     def poll_ev_continuously(self):

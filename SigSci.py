@@ -621,7 +621,7 @@ class SigSciAPI():
                 'isp': None
             }
         result = {}
-        result['@timestamp'] = invalue['timestamp']
+        result['timestamp'] = invalue['timestamp']
         result['id'] = invalue['id']
         result['server'] = invalue['serverHostname']
         result['remote'] = {

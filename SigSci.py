@@ -47,6 +47,7 @@ FEED2 = False
 # defaults for polling
 POLL_REQUESTS = False
 POLL_EVENTS = False
+POLL_AGENTS = False
 # default for timeseries
 TIMESERIES = False
 ROLLUP = 60
@@ -884,6 +885,72 @@ class SigSciAPI():
             sys.exit()
 
 
+    def poll_ag_continuously(self):
+        """
+        SigSciAPI.poll_ag_continuously()
+
+        Polling agents
+
+        Before calling, set:
+            (Required):
+                SigSciAPI.corp
+                SigSciAPI.site
+
+        """
+
+        prev_set = {}
+        curr_set = {}
+        try:
+            while True:
+                # https://docs.signalsciences.net/api/#_corps__corpName__sites__siteName__agents_get
+                # /corps/{corpName}/sites/{siteName}/agents
+                url = self.base_url + self.CORPS_EP + self.corp + self.SITES_EP + self.site + self.AGENTS_EP
+
+                try:
+                    # try block attempts to handle unexpected connection issues
+                    r = requests.get(url, cookies=self.authn.cookies, headers=self.get_headers())
+                    # Reauthenticate if token expires early
+                    if r.status_code == 401:
+                        if sigsci.authenticate():
+                            r = requests.get(url, cookies=self.authn.cookies, headers=self.get_headers())
+                except Exception as e:
+                    # try again
+                    r = requests.get(url, cookies=self.authn.cookies, headers=self.get_headers())
+                    # Reauthenticate if token expires early
+                    if r.status_code == 401:
+                        if sigsci.authenticate():
+                            r = requests.get(url, cookies=self.authn.cookies, headers=self.get_headers())
+
+                j = json.loads(r.text)
+
+                if 'message' in j:
+                    raise ValueError(j['message'])
+
+                d = j['data']
+                for x in d:
+                    curr_set[x['agent.name']] = x
+
+                for n in curr_set:
+                    if n not in prev_set:
+                        # We haven't seen this agent - output it
+                        self.output_results(curr_set[n])
+                    else:
+                        if curr_set[n]['agent.timestamp'] != prev_set[n]['agent.timestamp']:
+                            # We haven't seen this set of metrics - output the agent
+                            self.output_results(curr_set[n])
+
+                # swap curr to prev
+                prev_set = curr_set
+                curr_set = {}
+
+                time.sleep(60)
+
+        except Exception as e:
+            print('Error: %s ' % str(e))
+            print('Query: %s ' % url)
+            sys.exit()
+
+
     def get_timeseries(self, tags, rollup=60):
         """
         SigSciAPI.get_timeseries(tag, rollup)
@@ -1566,6 +1633,7 @@ if __name__ == '__main__':
     parser.add_argument('--feed2', help='Retrieve data feed. Version 2', default=False, action='store_true')
     parser.add_argument('--poll-requests', help='Poll continuously for request data.', default=False, action='store_true')
     parser.add_argument('--poll-events', help='Poll continuously for event data.', default=False, action='store_true')
+    parser.add_argument('--poll-agents', help='Poll continuously for agent data.', default=False, action='store_true')
     parser.add_argument('--timeseries', help='Retrieve timeseries data.', default=False, action='store_true')
     parser.add_argument('--rollup', help='Rollup interval in seconds for timeseries requests.', default=60)
     parser.add_argument('--list-events', help='List events (flagged IPs).', default=False, action='store_true')
@@ -1644,6 +1712,7 @@ if __name__ == '__main__':
     sigsci.feed2 = os.environ.get("SIGSCI_FEED2") if os.environ.get('SIGSCI_FEED2') is not None else FEED2
     sigsci.poll_requests = os.environ.get("SIGSCI_POLL_REQUESTS") if os.environ.get('SIGSCI_POLL_REQUESTS') is not None else POLL_REQUESTS
     sigsci.poll_events = os.environ.get("SIGSCI_POLL_EVENTS") if os.environ.get('SIGSCI_POLL_EVENTS') is not None else POLL_EVENTS
+    sigsci.poll_agents = os.environ.get("SIGSCI_POLL_AGENTS") if os.environ.get('SIGSCI_POLL_AGENTS') is not None else POLL_AGENTS
     sigsci.timeseries = os.environ.get("SIGSCI_TIMESERIES") if os.environ.get('SIGSCI_TIMESERIES') is not None else TIMESERIES
     sigsci.rollup = os.environ.get("SIGSCI_ROLLUP") if os.environ.get('SIGSCI_ROLLUP') is not None else ROLLUP
     sigsci.list_events = os.environ.get("SIGSCI_LIST_EVENTS") if os.environ.get('SIGSCI_LIST_EVENTS') is not None else LIST_EVENTS
@@ -1696,6 +1765,7 @@ if __name__ == '__main__':
     sigsci.feed2 = arguments.feed2 if arguments.feed2 is not None else sigsci.feed2
     sigsci.poll_requests = arguments.poll_requests if arguments.poll_requests is not None else sigsci.poll_requests
     sigsci.poll_events = arguments.poll_events if arguments.poll_events is not None else sigsci.poll_events
+    sigsci.poll_agents = arguments.poll_agents if arguments.poll_agents is not None else sigsci.poll_agents
     sigsci.timeseries = arguments.timeseries if arguments.timeseries is not None else sigsci.timeseries
     sigsci.rollup = arguments.rollup if arguments.rollup is not None else sigsci.rollup
     sigsci.list_events = arguments.list_events if arguments.list_events is not None else sigsci.list_events
@@ -1769,6 +1839,10 @@ if __name__ == '__main__':
         elif sigsci.poll_events:
             # get continuously updating feed
             sigsci.poll_ev_continuously()
+
+        elif sigsci.poll_agents:
+            # get continuously updating feed
+            sigsci.poll_ag_continuously()
 
         elif sigsci.timeseries:
             # get timeseries data

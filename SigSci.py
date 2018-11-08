@@ -189,7 +189,6 @@ def enrich_req_result(invalue, prefixes):
     if invalue['tags']:
         result['tags'] = [tag['type'] for tag in invalue['tags']]
         result['tags_raw'] = invalue['tags']
-    result['summation'] = invalue['summation']
     if invalue['headersIn']:
         for header in invalue['headersIn']:
             result['request']['headers'][keyify(header[0])] = header[1]
@@ -219,7 +218,6 @@ def enrich_ev_result(invalue, prefixes):
     result['alert_id'] = invalue['alertId']
     result['expires'] = invalue['expires']
     result['expired_by'] = invalue['expiredBy']
-
     result['remote'] = {
         'ip': invalue['source'],
         'country': invalue['remoteCountryCode'],
